@@ -1,6 +1,6 @@
-const express = require('express');
-const axios = require('axios');
-const { Scraper } = require('@the-convocation/twitter-scraper');
+import express from 'express';
+import axios from 'axios';
+import { Scraper } from '@the-convocation/twitter-scraper';
 
 const DISCORD_WEBHOOK =
   'https://discord.com/api/webhooks/1512608075272552498/KkoD7KBWU5dZtstFsdPYocDBG0SJAQP_vhKZhz1HxaBkERl8Mmg1sRILbfRhgl3Q8OHZ';
@@ -83,20 +83,14 @@ async function pollUser(username) {
   for (const tweet of tweets) {
     if (!tweet.id) continue;
     if (seenIds.has(tweet.id)) continue;
-
     if (tweet.isReply) continue;
     if (tweet.isRetweet) continue;
 
     seenIds.add(tweet.id);
 
     const text = tweet.text || '';
-
     const photoUrls = (tweet.photos || []).map((p) => p.url).filter(Boolean);
-
-    let videoPreviewUrl = null;
-    if (tweet.videos && tweet.videos.length > 0) {
-      videoPreviewUrl = tweet.videos[0].preview || null;
-    }
+    const videoPreviewUrl = tweet.videos?.[0]?.preview ?? null;
 
     console.log(`New tweet from @${username}: ${tweet.id}`);
     await sendDiscordWebhook(username, text, tweet.id, photoUrls, videoPreviewUrl);
@@ -104,13 +98,13 @@ async function pollUser(username) {
 }
 
 async function seedSeen() {
-  console.log('Seeding seen IDs (existing posts will be skipped on first run)...');
+  console.log('Seeding seen IDs so existing posts are not re-sent...');
   for (const username of WATCHED_USERS) {
     const tweets = await fetchRecentTweets(username, 10);
     for (const tweet of tweets) {
       if (tweet.id) seenIds.add(tweet.id);
     }
-    console.log(`Seeded ${seenIds.size} total IDs so far (@${username} done)`);
+    console.log(`@${username} seeded (${seenIds.size} total IDs)`);
   }
 }
 
