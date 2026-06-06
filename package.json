@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "description": "Watches X posts from ShiinaBR and HYPEX and posts them to Discord",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
     "express": "^4.19.2",
-    "@the-convocation/twitter-scraper": "^0.12.1"
+    "@the-convocation/twitter-scraper": "^0.22.3"
   }
 }
