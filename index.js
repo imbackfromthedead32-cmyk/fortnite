@@ -6,7 +6,7 @@ const DISCORD_WEBHOOK =
   'https://discord.com/api/webhooks/1512608075272552498/KkoD7KBWU5dZtstFsdPYocDBG0SJAQP_vhKZhz1HxaBkERl8Mmg1sRILbfRhgl3Q8OHZ';
 
 const WATCHED_USERS = ['ShiinaBR', 'HYPEX'];
-const POLL_INTERVAL_MS = 60 * 1000;
+const POLL_INTERVAL_MS = 15 * 1000;
 
 const seenIds = new Set();
 const scraper = new Scraper();
@@ -77,11 +77,17 @@ async function fetchRecentTweets(username, limit = 10) {
   return tweets;
 }
 
-async function pollUser(username) {
+async function pollUser(username, seedOnly = false) {
   const tweets = await fetchRecentTweets(username, 10);
 
   for (const tweet of tweets) {
     if (!tweet.id) continue;
+
+    if (seedOnly) {
+      seenIds.add(tweet.id);
+      continue;
+    }
+
     if (seenIds.has(tweet.id)) continue;
     if (tweet.isReply) continue;
     if (tweet.isRetweet) continue;
@@ -97,27 +103,19 @@ async function pollUser(username) {
   }
 }
 
-async function seedSeen() {
-  console.log('Seeding seen IDs so existing posts are not re-sent...');
-  for (const username of WATCHED_USERS) {
-    const tweets = await fetchRecentTweets(username, 10);
-    for (const tweet of tweets) {
-      if (tweet.id) seenIds.add(tweet.id);
-    }
-    console.log(`@${username} seeded (${seenIds.size} total IDs)`);
-  }
-}
-
 async function poll() {
+  const start = Date.now();
   console.log(`Polling at ${new Date().toISOString()}`);
-  for (const username of WATCHED_USERS) {
-    await pollUser(username);
-  }
+  await Promise.all(WATCHED_USERS.map((u) => pollUser(u)));
+  console.log(`Poll done in ${Date.now() - start}ms`);
 }
 
 async function main() {
-  await seedSeen();
-  console.log('Bot is live. Polling every 60 seconds for:', WATCHED_USERS.join(', '));
+  console.log('Seeding existing tweet IDs...');
+  await Promise.all(WATCHED_USERS.map((u) => pollUser(u, true)));
+  console.log(`Seeded ${seenIds.size} IDs. Starting polling every ${POLL_INTERVAL_MS / 1000}s...`);
+
+  poll();
   setInterval(poll, POLL_INTERVAL_MS);
 }
 
