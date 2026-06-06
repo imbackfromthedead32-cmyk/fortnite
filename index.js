@@ -6,7 +6,7 @@ const DISCORD_WEBHOOK =
   'https://discord.com/api/webhooks/1512608075272552498/KkoD7KBWU5dZtstFsdPYocDBG0SJAQP_vhKZhz1HxaBkERl8Mmg1sRILbfRhgl3Q8OHZ';
 
 const WATCHED_USERS = ['ShiinaBR', 'HYPEX'];
-const POLL_INTERVAL_MS = 15 * 1000;
+const POLL_INTERVAL_MS = 30 * 1000;
 
 const seenIds = new Set();
 const scraper = new Scraper();
@@ -108,6 +108,24 @@ async function poll() {
   console.log(`Polling at ${new Date().toISOString()}`);
   await Promise.all(WATCHED_USERS.map((u) => pollUser(u)));
   console.log(`Poll done in ${Date.now() - start}ms`);
+
+  if (seenIds.size > 5000) {
+    seenIds.clear();
+    console.log('seenIds cleared (hit 5000 cap)');
+  }
+}
+
+async function pollingLoop() {
+  while (true) {
+    const start = Date.now();
+
+    await poll();
+
+    const elapsed = Date.now() - start;
+    const wait = Math.max(0, POLL_INTERVAL_MS - elapsed);
+
+    await new Promise((r) => setTimeout(r, wait));
+  }
 }
 
 async function main() {
@@ -115,8 +133,7 @@ async function main() {
   await Promise.all(WATCHED_USERS.map((u) => pollUser(u, true)));
   console.log(`Seeded ${seenIds.size} IDs. Starting polling every ${POLL_INTERVAL_MS / 1000}s...`);
 
-  poll();
-  setInterval(poll, POLL_INTERVAL_MS);
+  await pollingLoop();
 }
 
 main().catch((err) => {
