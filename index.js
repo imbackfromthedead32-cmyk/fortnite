@@ -1,24 +1,15 @@
 const express = require('express');
 const axios = require('axios');
-const { XMLParser } = require('fast-xml-parser');
+const { Scraper } = require('@the-convocation/twitter-scraper');
 
 const DISCORD_WEBHOOK =
   'https://discord.com/api/webhooks/1512608075272552498/KkoD7KBWU5dZtstFsdPYocDBG0SJAQP_vhKZhz1HxaBkERl8Mmg1sRILbfRhgl3Q8OHZ';
 
 const WATCHED_USERS = ['ShiinaBR', 'HYPEX'];
-
-const NITTER_INSTANCES = [
-  'https://nitter.poast.org',
-  'https://nitter.privacydev.net',
-  'https://nitter.cz',
-  'https://nitter.space',
-  'https://n.opnxng.com',
-];
-
 const POLL_INTERVAL_MS = 60 * 1000;
 
 const seenIds = new Set();
-const parser = new XMLParser({ ignoreAttributes: false });
+const scraper = new Scraper();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,68 +22,7 @@ app.listen(PORT, () => {
   console.log(`Health check server on port ${PORT}`);
 });
 
-async function fetchRSS(username) {
-  for (const instance of NITTER_INSTANCES) {
-    try {
-      const url = `${instance}/${username}/rss`;
-      const res = await axios.get(url, {
-        timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; leak-bot/1.0)' },
-      });
-      const parsed = parser.parse(res.data);
-      const items = parsed?.rss?.channel?.item;
-      if (!items) return [];
-      return Array.isArray(items) ? items : [items];
-    } catch {
-      continue;
-    }
-  }
-  console.warn(`All Nitter instances failed for @${username}`);
-  return [];
-}
-
-function extractTweetId(link) {
-  const match = link && link.match(/\/status\/(\d+)/);
-  return match ? match[1] : null;
-}
-
-function isReply(item) {
-  const title = (item.title || '').trim();
-  return title.startsWith('R to') || title.startsWith('@');
-}
-
-function extractImagesFromDescription(description) {
-  if (!description) return [];
-  const regex = /<img[^>]+src="([^"]+)"/g;
-  const urls = [];
-  let match;
-  while ((match = regex.exec(description)) !== null) {
-    const src = match[1];
-    if (!src.includes('/pic/') && !src.includes('profile_images')) {
-      urls.push(src);
-    } else if (src.includes('/pic/')) {
-      urls.push(src);
-    }
-  }
-  return urls;
-}
-
-function stripHtml(html) {
-  if (!html) return '';
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .trim();
-}
-
-async function sendDiscordWebhook(username, tweetText, tweetId, imageUrls) {
+async function sendDiscordWebhook(username, tweetText, tweetId, photoUrls, videoUrl) {
   const tweetUrl = `https://x.com/${username}/status/${tweetId}`;
 
   const embed = {
@@ -108,10 +38,17 @@ async function sendDiscordWebhook(username, tweetText, tweetId, imageUrls) {
     footer: { text: 'X (Twitter)' },
   };
 
-  if (imageUrls.length > 0) {
-    embed.image = { url: imageUrls[0] };
-    if (imageUrls.length > 1) {
-      embed.description += `\n\n🖼️ *${imageUrls.length} images — [view all on X](${tweetUrl})*`;
+  if (photoUrls.length > 0) {
+    embed.image = { url: photoUrls[0] };
+    if (photoUrls.length > 1) {
+      embed.description += `\n\n🖼️ *${photoUrls.length} images — [view all on X](${tweetUrl})*`;
+    }
+  }
+
+  if (videoUrl) {
+    embed.description += `\n\n📹 *Video attached — [watch on X](${tweetUrl})*`;
+    if (photoUrls.length === 0) {
+      embed.image = { url: videoUrl };
     }
   }
 
@@ -128,35 +65,52 @@ async function sendDiscordWebhook(username, tweetText, tweetId, imageUrls) {
   }
 }
 
+async function fetchRecentTweets(username, limit = 10) {
+  const tweets = [];
+  try {
+    for await (const tweet of scraper.getTweets(username, limit)) {
+      tweets.push(tweet);
+    }
+  } catch (err) {
+    console.error(`Failed to fetch tweets for @${username}:`, err.message);
+  }
+  return tweets;
+}
+
 async function pollUser(username) {
-  const items = await fetchRSS(username);
+  const tweets = await fetchRecentTweets(username, 10);
 
-  for (const item of items) {
-    if (isReply(item)) continue;
+  for (const tweet of tweets) {
+    if (!tweet.id) continue;
+    if (seenIds.has(tweet.id)) continue;
 
-    const tweetId = extractTweetId(item.link || item.guid || '');
-    if (!tweetId) continue;
-    if (seenIds.has(tweetId)) continue;
+    if (tweet.isReply) continue;
+    if (tweet.isRetweet) continue;
 
-    seenIds.add(tweetId);
+    seenIds.add(tweet.id);
 
-    const description = item.description || '';
-    const tweetText = stripHtml(description);
-    const imageUrls = extractImagesFromDescription(description);
+    const text = tweet.text || '';
 
-    await sendDiscordWebhook(username, tweetText, tweetId, imageUrls);
+    const photoUrls = (tweet.photos || []).map((p) => p.url).filter(Boolean);
+
+    let videoPreviewUrl = null;
+    if (tweet.videos && tweet.videos.length > 0) {
+      videoPreviewUrl = tweet.videos[0].preview || null;
+    }
+
+    console.log(`New tweet from @${username}: ${tweet.id}`);
+    await sendDiscordWebhook(username, text, tweet.id, photoUrls, videoPreviewUrl);
   }
 }
 
 async function seedSeen() {
-  console.log('Seeding seen IDs to avoid duplicate alerts on startup...');
+  console.log('Seeding seen IDs (existing posts will be skipped on first run)...');
   for (const username of WATCHED_USERS) {
-    const items = await fetchRSS(username);
-    for (const item of items) {
-      const id = extractTweetId(item.link || item.guid || '');
-      if (id) seenIds.add(id);
+    const tweets = await fetchRecentTweets(username, 10);
+    for (const tweet of tweets) {
+      if (tweet.id) seenIds.add(tweet.id);
     }
-    console.log(`Seeded ${seenIds.size} IDs for @${username}`);
+    console.log(`Seeded ${seenIds.size} total IDs so far (@${username} done)`);
   }
 }
 
@@ -169,8 +123,11 @@ async function poll() {
 
 async function main() {
   await seedSeen();
-  console.log('Bot is live. Checking every 60 seconds for:', WATCHED_USERS.join(', '));
+  console.log('Bot is live. Polling every 60 seconds for:', WATCHED_USERS.join(', '));
   setInterval(poll, POLL_INTERVAL_MS);
 }
 
-main();
+main().catch((err) => {
+  console.error('Fatal error:', err.message);
+  process.exit(1);
+});
